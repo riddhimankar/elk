@@ -1,0 +1,159 @@
+#!/bin/sh
+ 
+sudo apt update && apt -y upgrade #update ubuntu
+sudo apt install -y apt-transport-https software-properties-common wget # add some programs dependencies if missing
+sudo add-apt-repository -y ppa:webupd8team/java # add java repository
+sudo apt update # update apt with the new repository
+sudo apt-get -y install oracle-java8-installer # install java
+ 
+ 
+wget -qO - https://packages.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add - #add elastic GPG key
+echo "deb https://artifacts.elastic.co/packages/5.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-5.x.list #add elastic repository
+sudo apt-get update #update apt with the new repository
+sudo apt-get -y install elasticsearch #install elasticsearch
+ 
+ 
+ 
+sed -i '2s/.*/START_DAEMON=true/' /etc/default/elasticsearch #change elastic config
+sed -i '212s/.*/network.host: localhost/' /etc/elasticsearch/elasticsearch.yml #change elastic config
+ 
+ 
+sudo service elasticsearch restart # restart elastic service
+sudo systemctl enable elasticsearch # add elastic service on boot
+ 
+ 
+ 
+sudo apt install kibana # install kibana
+ 
+ 
+sudo sed -i '8s/.*/server.host: "localhost"/' /etc/kibana/kibana.yml #edit kibana config
+ 
+ 
+ 
+sudo systemctl restart kibana #restart kibana
+sudo systemctl enable kibana # add kibana service to boot
+ 
+sudo /etc/init.d/apache2 stop # if port 80 is used by apache2
+ 
+sudo apt -y install nginx # install nginx
+sudo rm /etc/nginx/sites-enabled/default # delete default config
+ 
+ 
+ 
+ 
+echo 'server {
+    listen 80;
+    location / {
+        proxy_pass http://localhost:5601;  
+ }
+}
+' > /etc/nginx/sites-available/kibana #add nginx config revere proxy on port 80 to kibana port 5601
+ 
+sudo ln -s /etc/nginx/sites-available/kibana /etc/nginx/sites-enabled/kibana  # create symbolik link to nginx config
+sudo systemctl restart nginx # restart nginx
+ 
+ 
+sudo apt -y install logstash # install logstash
+ 
+ 
+echo 'input { 
+    tcp {
+        port => 514
+        type => syslog
+    }
+    udp {
+        port => 514
+        type => syslog
+    }
+}
+ 
+ 
+   
+ 
+ 
+output {
+  elasticsearch {
+    hosts => ["localhost"]
+  }
+ 
+} ' > /etc/logstash/conf.d/logstash-simple.conf # add custome logstash config
+ 
+ 
+sudo setcap cap_net_bind_service=+epi /usr/lib/jvm/java-8-oracle/jre/bin/java # exclude java from previliged ports, for it can use por 514 that is preveliged on ubuntu 16.04
+ 
+sudo systemctl restart logstash # restart logstash service
+sudo systemctl enable logstash # add logstash service to boot
+ 
+ 
+ 
+ 
+echo 'deb [arch=amd64] http://packages.elastic.co/curator/4/debian stable main ' > /etc/apt/sources.list.d/curator.list # add curator repository
+ 
+sudo apt update # update apt with new repository
+ 
+sudo apt -y install elasticsearch-curator # install curator
+ 
+ 
+ 
+echo '
+# Remember, leave a key empty if there is no value.  None will be a string,
+# not a Python "NoneType"
+client:
+  hosts: 127.0.0.1
+  port: 9200
+  url_prefix:
+  use_ssl: False
+  certificate:
+  client_cert:
+  client_key:
+  ssl_no_validate: False
+  http_auth:
+  timeout: 30
+  master_only: False
+ 
+logging:
+  loglevel: INFO
+  logfile:
+  logformat: default
+  blacklist: ['elasticsearch', 'urllib3']
+ ' > /root/conf.yml # create curator config
+  
+echo "
+ actions:
+  1:
+    action: delete_indices
+    description: >-
+      Delete indices older than 45 days (based on index name), for logstash-
+      prefixed indices. Ignore the error if the filter does not result in an
+      actionable list of indices (ignore_empty_list) and exit cleanly.
+    options:
+      ignore_empty_list: True
+      timeout_override:
+      continue_if_exception: False
+      disable_action: False
+    filters:
+    - filtertype: pattern
+      kind: prefix
+      value: logstash-
+      exclude:
+    - filtertype: age
+      source: name
+      direction: older
+      timestring: '%Y.%m.%d'
+      unit: days
+      unit_count: 7
+      exclude:
+ 
+" > /root/delete_indices.yml # create curator action
+ 
+ 
+crontab -l | { cat; echo "0 0 * * * /usr/bin/curator --config /root/conf.yml /root/delete_indices.yml >> /home/michael/curator.log 2>&1"; } | crontab - # add crontab schedual for curator
+ 
+#test elk
+logger -n localhost -P 514 Elk is working !
+ 
+ 
+ 
+  
+#etc.
+
